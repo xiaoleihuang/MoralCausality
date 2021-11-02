@@ -16,7 +16,7 @@ if __name__ == '__main__':
     device = 0
     epochs = 100
     hidden_size = 100
-    model = 'bert_gumbel'
+    model_ = 'bert'
     test_file = 'dataset/sentiment/orig/test.tsv'
 
     analysis = Analysis()
@@ -28,7 +28,7 @@ if __name__ == '__main__':
     testloader = torch.utils.data.DataLoader(test_dataset,
                              batch_size=batch_size, shuffle=False, num_workers=10)
 
-    if model == 'bert':
+    if model_ == 'bert':
         config = BertConfig.from_pretrained('bert-base-uncased')
         config.num_labels = 11
         model = BertForSequenceClassification(config).cuda(device)
@@ -45,7 +45,7 @@ if __name__ == '__main__':
         for batch_id, (tid_code, source_code, sentiment, reviews, mask,dist) in enumerate(trainloader):
             reviews, mask, sentiment = reviews.cuda(device), mask.cuda(device), sentiment.cuda(device)
             optimizer.zero_grad()
-            if model == 'bert':
+            if model_ == 'bert':
                 output = model(input_ids=reviews, attention_mask=mask).logits
             else:
                 source_code,dist = source_code.cuda(device).long(),dist.cuda(device).float()
@@ -61,7 +61,7 @@ if __name__ == '__main__':
             for batch_id, (tid_code, source_code, sentiment, reviews, mask,dist) in enumerate(trainloader):
                 reviews, mask, sentiment = reviews.cuda(device), mask.cuda(device), sentiment.cuda(device)
                 optimizer.zero_grad()
-                if model == 'bert':
+                if model_ == 'bert':
                     output = model(input_ids=reviews, attention_mask=mask).logits
                 else:
                     source_code,dist = source_code.cuda(device).long(),dist.cuda(device).float()
@@ -75,3 +75,5 @@ if __name__ == '__main__':
             recall = TP/recall
             F1 = 2 * (precison*recall)/(precison+recall)
             logger.info('epoch: {}, F1: {}, precision:{}. recall:{}'.format(epoch, F1, precison, recall))
+
+    print(model)
