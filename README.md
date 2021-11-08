@@ -7,5 +7,5 @@
 | + domain adversarial| | | |
 |lstm|0.883|0.878|0.887|
 | + domain adversarial|0.890 |0.850 |0.935 |
-|bert|0.951|0.932|0.970|
+|bert|0.919|0.901|0.938|
 | + domain adversarial| | | |
