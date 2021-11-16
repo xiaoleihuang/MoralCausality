@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.special import kl_div
 
 class Analysis:
     def __init__(self,file='/home/ywu10/Documents/MoralCausality/data/MFTC_V4_text_preprogress.tsv',ratio=True):
@@ -34,4 +35,22 @@ class Analysis:
             index += 1
         fig.suptitle('Categorical Plotting')
         plt.show()
+
+def func():
+    a = Analysis()
+    dist,_,source = a.distribution()
+    a.paintdistribution()
+    kl = []
+    big = 0
+    for i in dist:
+        gg = []
+        for j in dist:
+            b = sum(kl_div(dist[i],dist[j]))
+            if b> big:
+                big = b
+                print(i)
+                print(j)
+        kl.append(gg)
+    kl = np.array(kl)
+    print(kl)
 

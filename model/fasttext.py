@@ -2,18 +2,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class FastText(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, input_dim, args):
         super().__init__()
 
         self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
+        self.hidden_dim = args.HIDDEN_DIM
+        self.output_dim = args.OUTPUT_DIM
 
         #maps sparse vector inputs to dense vector word embeddings
-        self.embedding = nn.Embedding(input_dim, hidden_dim)
+        self.embedding = nn.Embedding(input_dim, self.hidden_dim)
 
         #goes from the average of the word embeddings to the output prediction
-        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.fc = nn.Linear(self.hidden_dim, self.output_dim)
 
     def forward(self, x):
         #x = [batch size, seq. length]
