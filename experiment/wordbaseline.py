@@ -3,6 +3,7 @@ sys.path.append('/home/ywu10/Documents/MoralCausality/')
 import torch
 import numpy as np
 import argparse
+import pickle
 from loguru import logger
 import torch.optim as optim
 from dataloader.analysis import Analysis
@@ -21,11 +22,11 @@ parser.add_argument('--N_GRAMS', default=1, type=int)
 parser.add_argument('--MAX_LENGTH', default=None, type=int)
 parser.add_argument('--VOCAB_MAX_SIZE', default=None, type=int)
 parser.add_argument('--BATCH_SIZE', '-b', default=32,type=int)
-parser.add_argument('--N_EPOCHS', default=240, type=int)
+parser.add_argument('--N_EPOCHS', default=100, type=int)
 parser.add_argument('--HIDDEN_DIM', default=300, type=int)
 parser.add_argument('--OUTPUT_DIM', default=11, type=int)
 parser.add_argument('--VOCAB_MIN_FREQ', default=1, type=int)
-parser.add_argument('--lr', default=1e-4, type=float)
+parser.add_argument('--lr', default=1e-3, type=float)
 parser.add_argument('--model', default='lstm', type=str)
 parser.add_argument('--using_glove', default=True)
 parser.add_argument('--using_dann', default=False)
@@ -55,9 +56,9 @@ if __name__ == '__main__':
 
     dist, label, source = Analysis().distribution()
     source_num = source.index('Sandy')
-    train = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=True)
-    test = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=False)
-    test2 = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Sandy',train=False)
+    train = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=True,tune=False)
+    test = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=False,tune=False)
+    test2 = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Sandy',train=False,tune=False)
 
     LABEL.build_vocab(train,test, test2)
     LABEL2.build_vocab(train,test, test2)
@@ -89,7 +90,7 @@ if __name__ == '__main__':
     source_pre = []
     target_pre = []
     tt = []
-    best_loss = 10000
+    best_acc = 0
     for epoch in range(1, args.N_EPOCHS+1):
 
         #set metric accumulators
@@ -106,7 +107,7 @@ if __name__ == '__main__':
             p = torch.tensor(1/(args.N_EPOCHS+1)).cuda()
             train = True if epoch<args.stop_domain else False
             predictions,domain,_ = model(x, p, train=train)
-            loss = F.binary_cross_entropy_with_logits(predictions,y)
+            loss = F.binary_cross_entropy(predictions,y)
             if (args.using_dann == True and train==True) or args.multile:
                 mask = (source == source_num).float().cuda().unsqueeze(-1)
                 loss = F.binary_cross_entropy_with_logits(predictions,y,reduction='none') * mask
@@ -115,10 +116,13 @@ if __name__ == '__main__':
                 loss = loss1 + loss
             loss.backward()
             optimizer.step()
+            '''
             if loss < best_loss:
                 best_loss = loss
                 torch.save(model.state_dict(),'model.pkl')
+            '''
 
+        '''
         embeds = []
         labelss = []
         with torch.no_grad():
@@ -145,6 +149,7 @@ if __name__ == '__main__':
             tt.append(F1.cpu())
             logger.info('epoch: {}, F1: {}, precision:{}. recall:{}'.format(epoch, F1, precision, recall))
         #model_dict=model.load_state_dict(torch.load('model.pkl'))
+        '''
 
         embeds = []
         labelss = []
@@ -161,7 +166,7 @@ if __name__ == '__main__':
                 embeds += embed
                 ll = y.cpu().tolist()
                 labelss.append(ll)
-                prediction = F.sigmoid(prediction)
+                #prediction = F.sigmoid(prediction)
                 aa = (prediction > 0.5).float()
                 TP = TP + torch.sum(aa * y)
                 recall = recall + torch.sum(y)
@@ -183,7 +188,7 @@ if __name__ == '__main__':
                 x = batch.review.cuda()
                 y = batch.label.cuda()
                 prediction,_,embed = model(x,train=False)
-                prediction = F.sigmoid(prediction)
+                #prediction = F.sigmoid(prediction)
                 aa = (prediction > 0.5).float()
                 TP = TP + torch.sum(aa * y)
                 recall = recall + torch.sum(y)
@@ -191,21 +196,99 @@ if __name__ == '__main__':
                 embed = embed.cpu().tolist()
                 embeds +=embed
                 ll = y.cpu().tolist()
-                labelss.append(ll)
+                labelss+=ll
             precision = TP/precision
             recall = TP/recall
-            F1 = 2 * (precision*recall)/(precision+recall)
-            source_pre.append(F1.cpu())
-            logger.info('epoch: {}, F1: {}, precision:{}. recall:{}'.format(epoch, F1, precision, recall))
+            F2 = 2 * (precision*recall)/(precision+recall)
+            source_pre.append(F2.cpu())
+            logger.info('epoch: {}, F2: {}, precision:{}. recall:{}'.format(epoch, F2, precision, recall))
             print('---------')
             #paint(embeds,label)
 
+            if best_acc < F1+F2:
+                best_acc = F1 + F2
+                torch.save(model.state_dict(),'wordmodel.pkl')
+
+    #保存
+    model_dict=model.load_state_dict(torch.load('wordmodel.pkl'))
+    embeds = []
+    labelss = []
+    with torch.no_grad():
+        recall = 0
+        precision = 0
+        TP = 0
+        for idx, batch in enumerate(train_iter):
+
+            x = batch.review.cuda()
+            y = batch.label.cuda()
+            prediction,_,embed = model(x,train=False)
+            embed = embed.cpu().tolist()
+            embeds += embed
+            ll = y.cpu().tolist()
+            labelss.append(ll)
+
+        embeds = np.array(embeds)
+        labelss = sum(labelss,[])
+        labelss = np.array(labelss)
+        a = embeds, labelss
+        with open("train_source_word.npy", 'wb') as fo:
+            pickle.dump(a, fo)
+
+        recall = 0
+        precision = 0
+        TP = 0
+        embeds = []
+        labelss = []
+        for idx, batch in enumerate(test_iter):
+
+            x = batch.review.cuda()
+            y = batch.label.cuda()
+            prediction,_,embed = model(x,train=False)
+            embed = embed.cpu().tolist()
+            embeds += embed
+            ll = y.cpu().tolist()
+            labelss.append(ll)
+
+        embeds = np.array(embeds)
+        labelss = sum(labelss,[])
+        labelss = np.array(labelss)
+        a = embeds, labelss
+        with open("target_word.npy", 'wb') as fo:
+            pickle.dump(a, fo)
+
+        recall = 0
+        precision = 0
+        TP = 0
+        embeds = []
+        labelss = []
+        for idx, batch in enumerate(test_iter2):
+
+            x = batch.review.cuda()
+            y = batch.label.cuda()
+            prediction,_,embed = model(x,train=False)
+            #prediction = F.sigmoid(prediction)
+            aa = (prediction > 0.5).float()
+            TP = TP + torch.sum(aa * y)
+            recall = recall + torch.sum(y)
+            precision = precision + torch.sum(aa)
+            embed = embed.cpu().tolist()
+            embeds += embed
+            ll = y.cpu().tolist()
+            labelss+=ll
+
+        embeds = np.array(embeds)
+        labelss = sum(labelss,[])
+        labelss = np.array(labelss)
+        a = embeds, labelss
+
+        with open("test_source_word.npy", 'wb') as fo:
+            pickle.dump(a, fo)
+
+    '''
     x = np.arange(0,len(source_pre),1)
-    plt.scatter(x,tt,color=(0.1,0.,0.),label='train')
+    #plt.scatter(x,tt,color=(0.1,0.,0.),label='train')
     plt.scatter(x,source_pre,color=(0.8,0.,0.),label='source')
     plt.scatter(x,target_pre,color=(0.,0.5,0.),label='target')
     plt.legend()
     plt.show()
-
-    #不同域：F1:  F1: 0.2544780671596527, precision:0.3149847090244293. recall:0.21347150206565857
-    #+DANN: F1: 0.3324011266231537, precision:0.43108808994293213. recall:0.270481139421463
+    '''

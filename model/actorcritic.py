@@ -22,22 +22,24 @@ class CalReward():
     def reward(ps,ps_, label, source_num,source): #在不同epoch中训练结果的稳定性
 
         '''
-
-        :param ps: 原始源域预测
-        :param ps_: 新的源域预测
+        :param ps: 原预测
+        :param ps_: 新预测
         :param label: 源域标签
-        :param pt: rl目标域预测
         :return:
         '''
+        #源域损失
+        origin = (ps > 0.5).float() * label
+        after = (ps_ > 0.5).float() * label
+        mask = (source_num == source).float()
+        #惩罚把原来对的改错, 奖励把原来错的改对
+        reward = torch.sum((after - origin),dim=-1) * mask
 
-        weight = (torch.argmax(ps,dim=-1) == torch.argmax(label,dim=-1)).float()
-        pss = F.softmax(ps, dim=-1)
-        reward = torch.sum(-pss * torch.log(pss),dim=-1)
-        reward = reward - torch.sum(ps_ * torch.log(ps),dim=-1)
-        reward = reward * weight * (source_num == source).float()
+        #源域尽量疏松
+        ps_ = F.softmax(ps_,dim=-1)
+        reward = reward - torch.mean(torch.sum(ps_ * torch.log(ps_),dim=-1) * (source_num == source).float(),dim=-1)
 
-        pt = F.softmax(ps_, dim=-1)
-        pt_hot = F.one_hot(torch.argmax(pt,dim=-1),11)
-        reward = torch.sum(pt_hot * torch.log(pt),dim=-1) * (source != source_num).float() + reward
+        #目标域尽量紧凑
+        pt_hot = F.one_hot(torch.argmax(ps_,dim=-1),11)
+        reward = torch.sum(pt_hot * torch.log(ps_),dim=-1) * (source != source_num).float() + reward
 
         return reward #越大越好

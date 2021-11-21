@@ -94,7 +94,7 @@ class WordDataset(data.Dataset):
             datas2 = tsv_data[tsv_data['source'] == self.target_area]
             #datas = tsv_data
             split = int(len(datas2) * 0.8)
-            datas2 = datas2[split:]
+            datas2 = datas2[:split] #测试和训练数据不同
             datas = pd.concat([datas,datas2],ignore_index=True)
 
         else:

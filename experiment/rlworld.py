@@ -22,12 +22,12 @@ parser.add_argument('--N_GRAMS', default=1, type=int)
 parser.add_argument('--MAX_LENGTH', default=None, type=int)
 parser.add_argument('--VOCAB_MAX_SIZE', default=None, type=int)
 parser.add_argument('--BATCH_SIZE', '-b', default=32,type=int)
-parser.add_argument('--N_EPOCHS', default=200, type=int)
-parser.add_argument('--START_TUNE', default=30, type=int)
+parser.add_argument('--N_EPOCHS', default=180, type=int)
+parser.add_argument('--START_TUNE', default=80, type=int)
 parser.add_argument('--HIDDEN_DIM', default=300, type=int)
 parser.add_argument('--OUTPUT_DIM', default=11, type=int)
 parser.add_argument('--VOCAB_MIN_FREQ', default=1, type=int)
-parser.add_argument('--lr', default=1e-4, type=float)
+parser.add_argument('--lr', default=1e-3, type=float)
 parser.add_argument('--model', default='lstm', type=str)
 parser.add_argument('--using_glove', default=True)
 parser.add_argument('--using_dann', default=False)
@@ -77,7 +77,7 @@ if __name__ == '__main__':
             critic = Critic(args)
             critic = critic.cuda()
             optimizer_critic = torch.optim.Adam(critic.parameters(), lr=0.001, betas=(0.9, 0.99), eps=0.0000001)
-            optimizer_rl = torch.optim.Adam(model.fc_rl.parameters(), lr=0.0001, betas=(0.9, 0.99), eps=0.0000001)
+            optimizer_rl = torch.optim.Adam(model.fc_rl.parameters(), lr=0.001, betas=(0.9, 0.99), eps=0.0000001)
 
     else:
         model = fasttext.FastText(len(TEXT.vocab), args)
@@ -178,7 +178,8 @@ if __name__ == '__main__':
             #if best < F1:
             #    best_loss = F1
             #    torch.save(model.state_dict(),'model.pkl')
-            target_pre.append(F1.cpu())
+            F1 = F1.cpu()
+            target_pre.append(float(F1))
             logger.info('test epoch: {}, F1: {}, precision:{}. recall:{}'.format(epoch, F1, precision, recall))
 
             recall = 0
@@ -201,7 +202,17 @@ if __name__ == '__main__':
             if best > abs(F1-F2): #+ F1 + F2:
                 best_loss = abs(F1-F2) #+ F1 + F2
                 torch.save(model.state_dict(),'model.pkl')
-            target_pre.append(F1.cpu())
+            F2 = F2.cpu()
+            source_pre.append(float(F2))
             logger.info('sandy test epoch: {}, F1: {}, precision:{}. recall:{}'.format(epoch, F2, precision, recall))
 
             print('------')
+
+    x = np.arange(0,len(source_pre),1)
+    #plt.scatter(x,tt,color=(0.1,0.,0.),label='train')
+    plt.scatter(x,source_pre,color=(0.8,0.,0.),label='source')
+    plt.scatter(x,target_pre,color=(0.,0.5,0.),label='target')
+    plt.legend()
+    plt.title('Training with RL',color='black')
+    plt.savefig('/home/ywu10/Documents/MoralCausality/img/rl.jpg')
+    plt.show()
