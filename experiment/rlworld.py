@@ -34,6 +34,8 @@ parser.add_argument('--using_dann', default=False)
 parser.add_argument('--using_rl', default=True)
 parser.add_argument('--multile', default=False)
 parser.add_argument('--stop_domain', default=180)
+parser.add_argument('--source', default='Sandy')
+parser.add_argument('--target', default='Davidson')
 args = parser.parse_args()
 
 
@@ -57,10 +59,11 @@ if __name__ == '__main__':
 
     dist, label, source = Analysis().distribution()
     source_num = source.index('Sandy')
-    train = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=True,tune=False)
-    test = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=False,tune=False)
-    test2 = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Sandy',train=False,tune=False)
-    tune = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=False,tune=True)
+    train = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area=args.source,target_area=args.target,train=True,tune=False)
+    test = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area=args.source,target_area=args.target,train=False,tune=False)
+    test2 = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area=args.source,target_area=args.source,train=False,tune=False)
+    tune = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area=args.source,target_area=args.target,train=False,tune=True)
+
 
     LABEL.build_vocab(train,test,test2, tune)
     LABEL2.build_vocab(train,test,test2, tune)
