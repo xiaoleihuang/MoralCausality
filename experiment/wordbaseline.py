@@ -56,9 +56,9 @@ if __name__ == '__main__':
 
     dist, label, source = Analysis().distribution()
     source_num = source.index('Sandy')
-    train = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=True,tune=False)
-    test = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=False,tune=False)
-    test2 = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Sandy',train=False,tune=False)
+    train = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=True,tune=False,split=True)
+    test = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Davidson',train=False,tune=False,split=False)
+    test2 = WordDataset(args,TEXT,LABEL,LABEL2,source,label,source_area='Sandy',target_area='Sandy',train=False,tune=False,split=True)
 
     LABEL.build_vocab(train,test, test2)
     LABEL2.build_vocab(train,test, test2)
@@ -277,18 +277,18 @@ if __name__ == '__main__':
             labelss+=ll
 
         embeds = np.array(embeds)
-        labelss = sum(labelss,[])
+        #labelss = sum(labelss,[])
         labelss = np.array(labelss)
         a = embeds, labelss
 
         with open("test_source_word.npy", 'wb') as fo:
             pickle.dump(a, fo)
 
-    '''
+
     x = np.arange(0,len(source_pre),1)
     #plt.scatter(x,tt,color=(0.1,0.,0.),label='train')
     plt.scatter(x,source_pre,color=(0.8,0.,0.),label='source')
     plt.scatter(x,target_pre,color=(0.,0.5,0.),label='target')
     plt.legend()
     plt.show()
-    '''
+

@@ -40,21 +40,20 @@ def preprogress():
     data.to_csv(file_, index = False)
 
 class WordDataset(data.Dataset):
-    def __init__(self,args,TEXT,LABEL,LABEL2,source,label, source_area, target_area,tune = True,\
-                 file='/home/ywu10/Documents/MoralCausality/data/MFTC_V4_text_preprogress.tsv', train=1,**kwargs):
+    def __init__(self,args,TEXT,LABEL, source,label, source_area, target_area, \
+                 file='/home/ywu10/Documents/MoralCausality/data/MFTC_V4_text_preprogress.tsv', train=True,**kwargs):
 
         self.file = file
         self.train = train
         self.args = args
         self.TEXT = TEXT
         self.LABEL = LABEL
-        self.LABEL2 = LABEL2
         self.source = source
         self.label = label
         self.source_area = source_area
         self.target_area = target_area
         self.file_ = '/home/ywu10/Documents/MoralCausality/data/MFTC_V4_text_word.csv'
-        examples, fields = self.example(tune)
+        examples, fields = self.example()
 
         super(WordDataset, self).__init__(examples, fields, **kwargs)
 
@@ -76,59 +75,41 @@ class WordDataset(data.Dataset):
             train_data = pd.DataFrame({'tid':tid_code, 'review':reviews, 'source':source_code, 'label':data['label']})
             train_data.to_csv(self.file_, index = False)
 
-    def example(self,tune):
+    def example(self):
 
         examples = []
 
-        fields = [('tid',None),('review',self.TEXT), ('source',self.LABEL2), ('label',self.LABEL)]
+        fields = [('tid',None),('review_s',self.TEXT), ('label_s',self.LABEL), ('review_t',self.TEXT), ('label_t',self.LABEL)]
 
         self.coding()
         tsv_data = pd.read_csv(self.file_)
 
-        if tune == True:
-            datas = tsv_data[tsv_data['source'] == self.source_area]
-            #datas = tsv_data
-            split = int(len(datas) * 0.8)
-            datas = datas[:split]
-
-            datas2 = tsv_data[tsv_data['source'] == self.target_area]
-            #datas = tsv_data
-            split = int(len(datas2) * 0.8)
-            datas2 = datas2[:split] #测试和训练数据不同
-            datas = pd.concat([datas,datas2],ignore_index=True)
+        if self.train:
+            data_s = tsv_data[tsv_data['source'] == self.source_area]
+            data_t = tsv_data[tsv_data['source'] == self.target_area]
+            split = int(min(len(data_s),len(data_t)) * 0.8)
+            data_s = data_s[:split]
+            data_t = data_t[:split]
 
         else:
+            data_s = tsv_data[tsv_data['source'] == self.target_area]
+            data_t = tsv_data[tsv_data['source'] == self.source_area]
+            length = min(int(len(data_s) * 0.2), int(len(data_t) * 0.2))
+            data_s = data_s[-length:-1]
+            data_t = data_t[-length:-1]
 
-            if self.train:
-                datas = tsv_data[tsv_data['source'] == self.source_area]
-                #datas = tsv_data
-                split = int(len(datas) * 0.8)
-                datas = datas[:split]
-
-                #datas2 = tsv_data[tsv_data['source'] == self.target_area]
-                #split = int(len(datas) * 0.8)
-                #datas2 = datas2[:split]
-                #datas = pd.concat([datas,datas2],ignore_index=True)
-
-                if self.args.using_dann == True:
-                    datas2 = tsv_data[tsv_data['source'] == self.target_area]
-                    datas = pd.concat([datas,datas2],ignore_index=True)
-
-            else:
-                datas = tsv_data[tsv_data['source'] == self.target_area]
-                #datas = tsv_data
-                split = int(len(datas) * 0.8)
-                datas = datas[split:]
-
-
-        for text, source, label in zip(datas['review'], datas['source'], datas['label']):
-            index = int(self.source.index(source))
-            label_ = 11*[0]
-            label_rep = label.split(',')
+        for text_s, label_s, text_t, label_t in zip(data_s['review'], data_s['label'], data_t['review'], data_t['label']):
+            labels = 11*[0]
+            label_rep = label_s.split(',')
             for la in label_rep:
-                label_[self.label.index(la)] = 1
+                labels[self.label.index(la)] = 1
 
-            examples.append(data.Example.fromlist([None, text, index, label_], fields))
+            labelt = 11*[0]
+            label_rep = label_s.split(',')
+            for la in label_rep:
+                labelt[self.label.index(la)] = 1
+
+            examples.append(data.Example.fromlist([None, text_s, labels, text_t, labelt], fields))
 
         return examples,fields
 
@@ -194,7 +175,7 @@ class BertDataLoader(data.Dataset):
             else:
                 datas.append(a[split:])
         datas = pd.concat(datas)
-        self.datas = datas['tid'].tolist(),datas['source'].tolist(),\
+        self.datas = datas['tid'].tolist(),datas['source'].tolist(), \
                      datas['label'].tolist(),datas['review'].tolist(),datas['mask'].tolist()
 
     def __getitem__(self, index):

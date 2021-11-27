@@ -27,12 +27,17 @@ class CalReward():
         :param label: 源域标签
         :return:
         '''
-        #源域损失
+        #源域损失,惩罚把原来对的改错, 奖励把原来错的改对
         origin = (ps > 0.5).float() * label
         after = (ps_ > 0.5).float() * label
         mask = (source_num == source).float()
-        #惩罚把原来对的改错, 奖励把原来错的改对
         reward = torch.sum((after - origin),dim=-1) * mask
+
+        mask = (source_num == source).float()
+        loss = torch.sum(F.binary_cross_entropy(ps_,label.float(),reduction='none'),dim=-1)
+        reward = torch.mean(-loss*mask) + reward
+
+        reward = torch.sum(-F.kl_div(ps_,ps,reduction='none'),dim=-1) * mask + reward
 
         #源域尽量疏松
         ps_ = F.softmax(ps_,dim=-1)

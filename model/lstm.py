@@ -55,10 +55,8 @@ class LSTMTagger(nn.Module):
         lstm_out = lstm_out[:,-1]
 
         domain_pre = 0
-        if self.args.using_dann == True and train==True:
-            lstm_out = self.grl(lstm_out,args)
 
-        if self.args.multile == True:
+        if self.args.multile == True or self.args.using_dann == True:
             domain_pre = self.fc_domain(lstm_out)
             domain_pre = F.softmax(domain_pre[:,-1],dim=-1)
 

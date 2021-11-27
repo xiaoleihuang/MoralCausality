@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import kl_div
+from pandas import Series,DataFrame
+import scipy.stats
 
 class Analysis:
     def __init__(self,file='/home/ywu10/Documents/MoralCausality/data/MFTC_V4_text_preprogress.tsv',ratio=True):
@@ -24,6 +26,16 @@ class Analysis:
             if self.ratio == True:
                 self.dist[ss] = np.array(b)/sum(b)
 
+        dist = []
+        for i in self.dist:
+            dist.append(self.dist[i])
+
+        '''  
+        kl_list = []
+        for i in range(len(dist)):
+            kl_list.append(scipy.stats.entropy(x, y))
+        '''
+
         return self.dist, self.label, self.source
 
     def paintdistribution(self):
@@ -39,18 +51,18 @@ class Analysis:
 def func():
     a = Analysis()
     dist,_,source = a.distribution()
-    a.paintdistribution()
+    #a.paintdistribution()
     kl = []
-    big = 0
+    dist_dict = {}
     for i in dist:
         gg = []
+        print(i)
         for j in dist:
             b = sum(kl_div(dist[i],dist[j]))
-            if b> big:
-                big = b
-                print(i)
-                print(j)
-        kl.append(gg)
-    kl = np.array(kl)
+            gg.append(b)
+        dist_dict[i] = gg
+    df = DataFrame(dist_dict,index=source)
+    df.to_csv('data_distribution.csv')
+
     print(kl)
 

@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class FastText(nn.Module):
     def __init__(self, input_dim, args):
         super().__init__()

@@ -22,6 +22,6 @@ class GRL(nn.Module):
 
     def forward(self, x,p):
 
-        lambda_ = (2 / (1+ torch.exp(-self.gamma*p[0])))-1
+        lambda_ = (2 / (1+ torch.exp(torch.tensor(-self.gamma))))-1
 
         return grl_func.apply(x, lambda_)
