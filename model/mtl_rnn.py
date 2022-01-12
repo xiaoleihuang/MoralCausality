@@ -345,7 +345,7 @@ class AdaptRNN(nn.Module):
             doc_domain = doc_domain.squeeze(dim=0)
 
         # prediction
-        domain_preds = self.predictor(doc_domain)
+        domain_preds = self.domain_clf(doc_domain)
         return domain_preds
 
     def freeze_layer(self, if_train=True):
@@ -372,11 +372,6 @@ def main(params):
         'subversion', 'loyalty', 'care', 'cheating',
         'purity', 'fairness', 'degradation', 'betrayal', 'harm', 'authority'
     ]
-    if torch.cuda.is_available() and params['device'] != 'cpu':
-        device = torch.device(params['device'])
-    else:
-        device = torch.device('cpu')
-    params['device'] = device
     wfile = open(params['result_path'], 'a')
 
     print('Loading Data...')
@@ -391,6 +386,12 @@ def main(params):
     all_data.labels = all_data.labels.apply(lambda x: label_encoder(x))
     params['unique_domains'] = list(all_data.corpus.unique())
     wfile.write(json.dumps(params) + '\n')
+
+    if torch.cuda.is_available() and params['device'] != 'cpu':
+        device = torch.device(params['device'])
+    else:
+        device = torch.device('cpu')
+    params['device'] = device
 
     # load the vaccine data and test the classifier on the vaccine data
     vaccine_df = pd.read_csv('../data/vaccine_morality.csv', dtype=str)
@@ -426,8 +427,9 @@ def main(params):
 
     # start to iterate experiments over domains
     print('Run over domains...')
+    print('Run over domains...')
     for didx, domain in enumerate(tqdm(params['unique_domains'])):
-        wfile.write('Working on {}, index {} \n'.format(domain, didx))
+        wfile.write('Working on Domain {}, Domain index {} \n'.format(domain, didx))
         in_domain_indices = [item for item in range(len(all_corpus['corpus'])) if all_corpus['corpus'][item] == didx]
         out_domain_indices = [item for item in range(len(all_corpus['corpus'])) if all_corpus['corpus'][item] != didx]
 
@@ -437,8 +439,8 @@ def main(params):
             'corpus': [all_corpus['corpus'][item] for item in out_domain_indices],
         }
         domain_corpus = {
-            'docs': train_corpus['docs'],
-            'labels': train_corpus['labels'],
+            'docs': [item for item in train_corpus['docs']],
+            'labels': [item for item in train_corpus['labels']],
             'corpus': [0] * len(train_corpus['docs']),  # first collect documents from out of domain
         }
         in_domain_corpus = {
@@ -481,32 +483,37 @@ def main(params):
 
         train_data_loader = DataLoader(
             train_data, batch_size=params['batch_size'], shuffle=True,
-            collate_fn=data_encoder
+            collate_fn=DataEncoder(params, mtype='rnn')
         )
         valid_data_loader = DataLoader(
             valid_data, batch_size=params['batch_size'], shuffle=True,
-            collate_fn=data_encoder
+            collate_fn=DataEncoder(params, mtype='rnn')
         )
         test_data_loader = DataLoader(
             test_data, batch_size=params['batch_size'], shuffle=True,
-            collate_fn=data_encoder
+            collate_fn=DataEncoder(params, mtype='rnn')
         )
         in_domain_train_data_loader = DataLoader(
             in_domain_train_data, batch_size=params['batch_size'], shuffle=True,
-            collate_fn=data_encoder
+            collate_fn=DataEncoder(params, mtype='rnn')
         )
         domain_data_loader = DataLoader(
             domain_data, batch_size=params['batch_size'], shuffle=True,
-            collate_fn=data_encoder
+            collate_fn=DataEncoder(params, mtype='rnn')
         )
 
         regular_model = RegularRNN(params)
         regular_model = regular_model.to(device)
         criterion = nn.BCEWithLogitsLoss().to(device)
-        domain_criterion = nn.CrossEntropyLoss().to(device)
         regular_optim = torch.optim.RMSprop(regular_model.parameters(), lr=params['lr'])
 
+        indomain_model = RegularRNN(params)
+        indomain_model = indomain_model.to(device)
+        indomain_optim = torch.optim.RMSprop(indomain_model.parameters(), lr=params['lr'])
+
         adapt_model = AdaptRNN(params)
+        adapt_model = adapt_model.to(device)
+        domain_criterion = nn.CrossEntropyLoss().to(device)
         criterion_adapt = nn.BCEWithLogitsLoss(reduction='none').to(device)
         pred_params = [param for name, param in adapt_model.named_parameters() if 'domain' not in name]
         adapt_pred_optim = torch.optim.RMSprop(pred_params, lr=params['lr'])
@@ -518,19 +525,33 @@ def main(params):
         print(params)
         best_valid_regular = 0.
         best_valid_adapt = 0.
+        best_valid_indomain = 0.
 
         for epoch in tqdm(range(params['epochs'])):
             train_loss_regular = 0.
             train_loss_adapt = 0.
             adapt_model.train()
             regular_model.train()
+            indomain_model.train()
+
+            # train indomain model for comparison
+            for step, train_batch in enumerate(in_domain_train_data_loader):
+                train_batch = tuple(t.to(device) for t in train_batch)
+                input_docs, input_labels, input_domains = train_batch
+                indomain_optim.zero_grad()
+
+                # indomain models
+                indomain_preds = indomain_model(**{'input_docs': input_docs})
+                loss = criterion(indomain_preds, input_labels)
+                loss.backward()
+                indomain_optim.step()
 
             # train discriminator first
             for step, train_batch in enumerate(domain_data_loader):
                 train_batch = tuple(t.to(device) for t in train_batch)
                 input_docs, input_labels, input_domains = train_batch
                 adapt_domain_optim.zero_grad()
-                domain_preds = adapt_model.discriminator({
+                domain_preds = adapt_model.discriminator(**{
                     'input_docs': input_docs
                 })
                 domain_loss = domain_criterion(domain_preds, input_domains)
@@ -558,8 +579,9 @@ def main(params):
                     'input_docs': input_docs
                 })
                 loss_adapt = criterion_adapt(adapt_preds, input_labels)
-                domain_preds = torch.sigmoid(adapt_model.discriminator({'input_docs': input_docs}))
-                loss_adapt = domain_preds * loss_adapt
+                domain_preds = torch.sigmoid(adapt_model.discriminator(**{'input_docs': input_docs}))
+                loss_adapt = loss_adapt.mean(axis=1)
+                loss_adapt = domain_preds[:, 1] * loss_adapt
                 loss_adapt = loss_adapt.mean()
                 train_loss_adapt += loss_adapt.item()
                 loss_avg_adapt = train_loss_adapt / (step + 1)
@@ -577,23 +599,26 @@ def main(params):
                 adapt_pred_optim.step()
 
             # fit on in domain corpus.
-            for _ in range(5):
+            for _ in range(3):
                 for step, train_batch in enumerate(in_domain_train_data_loader):
                     train_batch = tuple(t.to(device) for t in train_batch)
                     input_docs, input_labels, input_domains = train_batch
                     adapt_pred_optim.zero_grad()
-                    adapt_preds = adapt_model({
+                    adapt_preds = adapt_model(**{
                         'input_docs': input_docs
                     })
                     loss_adapt = criterion_adapt(adapt_preds, input_labels)
+                    loss_adapt = loss_adapt.mean()
                     loss_adapt.backward()
                     adapt_pred_optim.step()
 
             # evaluate on valid data
             regular_model.eval()
             adapt_model.eval()
+            indomain_model.eval()
             y_preds_regular = []
             y_preds_adapt = []
+            y_preds_indomain = []
             y_trues = []
             for valid_batch in valid_data_loader:
                 valid_batch = tuple(t.to(device) for t in valid_batch)
@@ -601,20 +626,25 @@ def main(params):
                 with torch.no_grad():
                     preds_regular = regular_model(**{'input_docs': input_docs})
                     preds_adapt = adapt_model(**{'input_docs': input_docs})
+                    preds_indomain = indomain_model(**{'input_docs': input_docs})
 
                 logits_regular = (torch.sigmoid(preds_regular) > .5).long().cpu().numpy()
                 logits_adapt = (torch.sigmoid(preds_adapt) > .5).long().cpu().numpy()
+                logits_indomain = (torch.sigmoid(preds_indomain) > .5).long().cpu().numpy()
+
                 y_preds_regular.extend(logits_regular)
                 y_preds_adapt.extend(logits_adapt)
+                y_preds_indomain.extend(logits_indomain)
                 y_trues.extend(input_labels.to('cpu').numpy())
 
             eval_score_regular = micro_f1_average(y_preds=y_preds_regular, y_truths=y_trues)
             eval_score_adapt = micro_f1_average(y_preds=y_preds_adapt, y_truths=y_trues)
+            eval_score_indomain = micro_f1_average(y_preds=y_preds_indomain, y_truths=y_trues)
 
             # test for regular model
             if eval_score_regular > best_valid_regular:
                 best_valid_regular = eval_score_regular
-                torch.save(regular_model, params['model_dir'] + '{}.pth'.format(os.path.basename(__file__)))
+                torch.save(regular_model, params['model_dir'] + 'regular_model_moral.pth')
 
                 # test
                 y_preds = []
@@ -633,14 +663,41 @@ def main(params):
                     y_trues.extend(input_labels.to('cpu').numpy())
 
                 test_score_regular = micro_f1_average(y_preds=y_preds, y_truths=y_trues)
-                wfile.write(
-                    'Test on Regular RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
+                regular_results = 'Test on Regular RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
                         domain, epoch, test_score_regular, best_valid_regular)
-                )
+                print('Regular Results: ', regular_results)
+                wfile.write(regular_results)
+
+            # test for indomain model
+            if eval_score_indomain > best_valid_indomain:
+                best_valid_indomain = eval_score_indomain
+                torch.save(indomain_model, params['model_dir'] + 'regular_model_moral.pth')
+
+                # test
+                y_preds = []
+                y_trues = []
+                # evaluate on the test set
+                for test_batch in test_data_loader:
+                    test_batch = tuple(t.to(device) for t in test_batch)
+                    input_docs, input_labels, input_domains = test_batch
+
+                    with torch.no_grad():
+                        preds_indomain = indomain_model(**{
+                            'input_docs': input_docs,
+                        })
+                    logits_indomain = (torch.sigmoid(preds_indomain) > .5).long().cpu().numpy()
+                    y_preds.extend(logits_indomain)
+                    y_trues.extend(input_labels.to('cpu').numpy())
+
+                test_score_indomain = micro_f1_average(y_preds=y_preds, y_truths=y_trues)
+                indomain_results = 'Test on Indomain RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
+                        domain, epoch, test_score_indomain, best_valid_indomain)
+                print('Regular Results: ', indomain_results)
+                wfile.write(indomain_results)
 
             if eval_score_adapt > best_valid_adapt:
                 best_valid_adapt = eval_score_adapt
-                torch.save(adapt_model, params['model_dir'] + '{}.pth'.format(os.path.basename(__file__)))
+                torch.save(adapt_model, params['model_dir'] + 'adapt_model_moral.pth')
 
                 # test
                 y_preds = []
@@ -659,10 +716,10 @@ def main(params):
                     y_trues.extend(input_labels.to('cpu').numpy())
 
                 test_score_adapt = micro_f1_average(y_preds=y_preds, y_truths=y_trues)
-                wfile.write(
-                    'Test on Adapt RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
+                test_score_adapt = 'Test on Adapt RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
                         domain, epoch, test_score_adapt, best_valid_adapt)
-                )
+                print('Adapt Results: ', test_score_adapt)
+                wfile.write(test_score_adapt)
 
     # vaccine experiments
     vaccine_data = {
@@ -683,45 +740,53 @@ def main(params):
         vaccine_data['docs'].append(row['text'])
         vaccine_data['labels'].append(encode_label)
     vaccine_train = {
-        'docs': vaccine_data['docs'][:250],
-        'labels': vaccine_data['labels'][:250],
+        'docs': [item for item in vaccine_data['docs'][:250]],
+        'labels': [item for item in vaccine_data['labels'][:250]],
         'corpus': [1] * 250
     }
     vaccine_test = {
-        'docs': vaccine_data['docs'][250:],
-        'labels': vaccine_data['labels'][250:],
+        'docs': [item for item in vaccine_data['docs'][250:]],
+        'labels': [item for item in vaccine_data['labels'][250:]],
         'corpus': [1] * 250
     }
     all_train = {
-        'docs': all_data.text.to_list() + vaccine_data['docs'][:250],
-        'labels': all_data.labels.to_list() + vaccine_data['labels'][:250],
-        'corpus': [0] * len(all_data.corpus.to_list()) + [1] * 250
+        'docs': all_data.text.to_list(),
+        'labels': all_data.labels.to_list(),
+        'corpus': [0] * len(all_data.labels.to_list())
     }
-    all_data = {
-        'docs': all_data.text.to_list() + vaccine_data['docs'],
+    all_train['docs'].extend([item for item in vaccine_data['docs'][:250]])
+    all_train['labels'].extend([item for item in vaccine_data['labels'][:250]])
+    all_train['corpus'].extend([1] * 250)
+
+    all_data_corpus = {
+        'docs': all_data.text.to_list(),
         'labels': all_data.labels.to_list() + vaccine_data['labels'],
-        'corpus': [0] * len(all_data.corpus.to_list()) + [1] * 250
+        'corpus': [0] * len(all_data.labels.to_list())
     }
+    all_data_corpus['docs'].extend([item for item in vaccine_data['docs']])
+    all_data_corpus['labels'].extend([item for item in vaccine_data['labels']])
+    all_data_corpus['corpus'].extend([1] * 500)
+
     vaccine_train_data = TorchDataset(vaccine_train, domain_name=params['domain_name'])
     vaccine_test_data = TorchDataset(vaccine_test, domain_name=params['domain_name'])
     all_train_data = TorchDataset(all_train, domain_name=params['domain_name'])
-    all_data_torch = TorchDataset(all_data, domain_name=params['domain_name'])
+    all_data_torch = TorchDataset(all_data_corpus, domain_name=params['domain_name'])
 
     train_data_loader = DataLoader(
         all_train_data, batch_size=params['batch_size'], shuffle=True,
-        collate_fn=data_encoder
+        collate_fn=DataEncoder(params, mtype='rnn')
     )
     valid_data_loader = DataLoader(
         vaccine_train_data, batch_size=params['batch_size'], shuffle=True,
-        collate_fn=data_encoder
+        collate_fn=DataEncoder(params, mtype='rnn')
     )
     test_data_loader = DataLoader(
         vaccine_test_data, batch_size=params['batch_size'], shuffle=True,
-        collate_fn=data_encoder
+        collate_fn=DataEncoder(params, mtype='rnn')
     )
     all_data_loader = DataLoader(
         all_data_torch, batch_size=params['batch_size'], shuffle=True,
-        collate_fn=data_encoder
+        collate_fn=DataEncoder(params, mtype='rnn')
     )
 
     regular_model = RegularRNN(params)
@@ -730,7 +795,12 @@ def main(params):
     domain_criterion = nn.CrossEntropyLoss().to(device)
     regular_optim = torch.optim.RMSprop(regular_model.parameters(), lr=params['lr'])
 
+    indomain_model = RegularRNN(params)
+    indomain_model = indomain_model.to(device)
+    indomain_optim = torch.optim.RMSprop(indomain_model.parameters(), lr=params['lr'])
+
     adapt_model = AdaptRNN(params)
+    adapt_model = adapt_model.to(device)
     criterion_adapt = nn.BCEWithLogitsLoss(reduction='none').to(device)
     pred_params = [param for name, param in adapt_model.named_parameters() if 'domain' not in name]
     adapt_pred_optim = torch.optim.RMSprop(pred_params, lr=params['lr'])
@@ -742,21 +812,32 @@ def main(params):
     print(params)
     best_valid_regular = 0.
     best_valid_adapt = 0.
+    best_valid_indomain = 0.
 
     for epoch in tqdm(range(params['epochs'])):
         train_loss_regular = 0.
         train_loss_adapt = 0.
         adapt_model.train()
         regular_model.train()
+        indomain_model.train()
+
+        # train indomain model for comparison
+        for step, train_batch in enumerate(in_domain_train_data_loader):
+            train_batch = tuple(t.to(device) for t in train_batch)
+            input_docs, input_labels, input_domains = train_batch
+            indomain_optim.zero_grad()
+            # indomain models
+            indomain_preds = indomain_model(**{'input_docs': input_docs})
+            loss = criterion(indomain_preds, input_labels)
+            loss.backward()
+            indomain_optim.step()
 
         # train discriminator first
         for step, train_batch in enumerate(all_data_loader):
             train_batch = tuple(t.to(device) for t in train_batch)
             input_docs, input_labels, input_domains = train_batch
             adapt_domain_optim.zero_grad()
-            domain_preds = adapt_model.discriminator({
-                'input_docs': input_docs
-            })
+            domain_preds = adapt_model.discriminator(**{'input_docs': input_docs})
             domain_loss = domain_criterion(domain_preds, input_domains)
             domain_loss.backward()
             adapt_domain_optim.step()
@@ -782,8 +863,9 @@ def main(params):
                 'input_docs': input_docs
             })
             loss_adapt = criterion_adapt(adapt_preds, input_labels)
-            domain_preds = torch.sigmoid(adapt_model.discriminator({'input_docs': input_docs}))
-            loss_adapt = domain_preds * loss_adapt
+            domain_preds = torch.sigmoid(adapt_model.discriminator(**{'input_docs': input_docs}))
+            loss_adapt = loss_adapt.mean(axis=1)
+            loss_adapt = domain_preds[:, 1] * loss_adapt
             loss_adapt = loss_adapt.mean()
             train_loss_adapt += loss_adapt.item()
             loss_avg_adapt = train_loss_adapt / (step + 1)
@@ -806,39 +888,46 @@ def main(params):
                 train_batch = tuple(t.to(device) for t in train_batch)
                 input_docs, input_labels, input_domains = train_batch
                 adapt_pred_optim.zero_grad()
-                adapt_preds = adapt_model({
-                    'input_docs': input_docs
-                })
+                adapt_preds = adapt_model(**{'input_docs': input_docs})
                 loss_adapt = criterion_adapt(adapt_preds, input_labels)
+                loss_adapt = loss_adapt.mean()
                 loss_adapt.backward()
                 adapt_pred_optim.step()
 
         # evaluate on valid data
         regular_model.eval()
         adapt_model.eval()
+        indomain_model.eval()
         y_preds_regular = []
         y_preds_adapt = []
+        y_preds_indomain = []
         y_trues = []
+
         for valid_batch in valid_data_loader:
             valid_batch = tuple(t.to(device) for t in valid_batch)
             input_docs, input_labels, input_domains = valid_batch
             with torch.no_grad():
                 preds_regular = regular_model(**{'input_docs': input_docs})
                 preds_adapt = adapt_model(**{'input_docs': input_docs})
+                preds_indomain = indomain_model(**{'input_docs': input_docs})
 
             logits_regular = (torch.sigmoid(preds_regular) > .5).long().cpu().numpy()
             logits_adapt = (torch.sigmoid(preds_adapt) > .5).long().cpu().numpy()
+            logits_indomain = (torch.sigmoid(preds_indomain) > .4).long().cpu().numpy()
+
             y_preds_regular.extend(logits_regular)
             y_preds_adapt.extend(logits_adapt)
+            y_preds_indomain.extend(logits_indomain)
             y_trues.extend(input_labels.to('cpu').numpy())
 
         eval_score_regular = micro_f1_average(y_preds=y_preds_regular, y_truths=y_trues)
         eval_score_adapt = micro_f1_average(y_preds=y_preds_adapt, y_truths=y_trues)
+        eval_score_indomain = micro_f1_average(y_preds=y_preds_indomain, y_truths=y_trues)
 
         # test for regular model
         if eval_score_regular > best_valid_regular:
             best_valid_regular = eval_score_regular
-            torch.save(regular_model, params['model_dir'] + '{}.pth'.format(os.path.basename(__file__)))
+            torch.save(regular_model, params['model_dir'] + 'regular_model_moral.pth')
 
             # test
             y_preds = []
@@ -857,14 +946,41 @@ def main(params):
                 y_trues.extend(input_labels.to('cpu').numpy())
 
             test_score_regular = micro_f1_average(y_preds=y_preds, y_truths=y_trues)
-            wfile.write(
-                'Test on Regular RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
+            regular_results = 'Test on Regular RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
                     'vaccine', epoch, test_score_regular, best_valid_regular)
-            )
+            print('Regular Results: ', regular_results)
+            wfile.write(regular_results)
+
+        # test for indomain model
+        if eval_score_indomain > best_valid_indomain:
+            best_valid_indomain = eval_score_indomain
+            torch.save(indomain_model, params['model_dir'] + 'regular_model_moral.pth')
+
+            # test
+            y_preds = []
+            y_trues = []
+            # evaluate on the test set
+            for test_batch in test_data_loader:
+                test_batch = tuple(t.to(device) for t in test_batch)
+                input_docs, input_labels, input_domains = test_batch
+
+                with torch.no_grad():
+                    preds_indomain = indomain_model(**{
+                        'input_docs': input_docs,
+                    })
+                logits_indomain = (torch.sigmoid(preds_indomain) > .5).long().cpu().numpy()
+                y_preds.extend(logits_indomain)
+                y_trues.extend(input_labels.to('cpu').numpy())
+
+            test_score_indomain = micro_f1_average(y_preds=y_preds, y_truths=y_trues)
+            indomain_results = 'Test on Indomain RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
+                    'vaccine', epoch, test_score_indomain, best_valid_indomain)
+            print('Regular Results: ', indomain_results)
+            wfile.write(indomain_results)
 
         if eval_score_adapt > best_valid_adapt:
             best_valid_adapt = eval_score_adapt
-            torch.save(adapt_model, params['model_dir'] + '{}.pth'.format(os.path.basename(__file__)))
+            torch.save(adapt_model, params['model_dir'] + 'adapt_model_moral.pth')
 
             # test
             y_preds = []
@@ -883,10 +999,10 @@ def main(params):
                 y_trues.extend(input_labels.to('cpu').numpy())
 
             test_score_adapt = micro_f1_average(y_preds=y_preds, y_truths=y_trues)
-            wfile.write(
-                'Test on Adapt RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
+            test_score_adapt = 'Test on Adapt RNN, Domain {}, Epoch {}, F1-micro-average {}, Valid Score {}\n'.format(
                     'vaccine', epoch, test_score_adapt, best_valid_adapt)
-            )
+            print('Adapt Results: ', test_score_adapt)
+            wfile.write(test_score_adapt)
 
     wfile.write('\n\n\n')
     wfile.close()
