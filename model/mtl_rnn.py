@@ -1032,7 +1032,7 @@ if __name__ == '__main__':
         'max_feature': 15000,
         'over_sample': True,
         'domain_name': 'corpus',
-        'epochs': 15,
+        'epochs': 20,
         'batch_size': 64,
         'lr': 9e-5,
         'max_len': 100,
